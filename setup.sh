@@ -2,7 +2,7 @@
 # ============================================================
 #  Compilador / Ofuscador de Lua para MTA — Instalador
 #  Uso:
-#    curl -sL https://raw.githubusercontent.com/TU_USUARIO/compilador-lua-mta/main/setup.sh | bash
+#    curl -sL https://raw.githubusercontent.com/2025-0181-spec/compilador-lua-mta/main/setup.sh | bash
 # ============================================================
 set -euo pipefail
 
