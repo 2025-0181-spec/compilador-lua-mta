@@ -1,0 +1,70 @@
+============================================================
+ COMPILADOR / OFUSCADOR DE LUA PARA MTA:SA
+============================================================
+
+QUE ES
+------
+Una herramienta con menu para tu VPS Ubuntu que protege tus
+scripts .lua de MTA con varias capas:
+  - Cifra los textos (strings)
+  - Minifica (quita comentarios y espacios)
+  - Envuelve todo en un cargador cifrado (loadstring)
+  - Bloqueo por IP (licencia): el script solo arranca en los
+    servidores cuya IP este en tu lista; si no, se apaga solo.
+
+
+ARCHIVOS
+--------
+  mta_obfuscator.py  -> el motor (no se ejecuta solo)
+  compilador.py      -> el MENU (esto es lo que abres)
+  input/             -> AQUI pones los .lua que quieres proteger
+  output/            -> aqui aparecen ya protegidos
+  config.json        -> se crea solo; guarda tus ajustes e IPs
+
+
+INSTALACION EN EL VPS (Ubuntu)
+------------------------------
+1) Sube los dos .py a una carpeta, por ejemplo /root/compilador/
+2) Asegurate de tener Python 3 (Ubuntu ya lo trae):
+       python3 --version
+3) Entra en la carpeta y abre el menu:
+       cd /root/compilador/
+       python3 compilador.py
+
+
+COMO USARLO
+-----------
+1) Copia tus scripts .lua dentro de la carpeta  input/
+2) Abre el menu:  python3 compilador.py
+3) (Opcional) Opcion 4 -> Bloqueo por IP:
+       - Anade la IP PUBLICA de tu servidor MTA
+       - Activa el bloqueo
+4) Opcion 1 -> Compilar TODO.
+5) Recoge los archivos protegidos de  output/  y subelos a tu
+   servidor MTA en lugar de los originales.
+
+
+IMPORTANTE SOBRE EL BLOQUEO POR IP
+----------------------------------
+- Funciona en scripts del lado del SERVIDOR (server-side).
+  Comprueba la IP publica de tu servidor con fetchRemote.
+- Tu servidor MTA necesita salida a internet para verificar.
+- Si la verificacion falla (sin internet), el script NO arranca
+  (es a proposito: mejor que no corra a que corra sin licencia).
+- Pon SIEMPRE tu propia IP antes de compilar, o ni tu servidor
+  arrancara el script.
+
+
+RECOMENDACION FINAL (doble proteccion)
+--------------------------------------
+Esto ofusca, pero la ofuscacion DISUADE, no es 100% inviolable.
+Para mas seguridad, despues de compilar aqui, pasa el resultado
+por el compilador OFICIAL de MTA (lo convierte a bytecode):
+       https://luac.multitheftauto.com/
+Las dos capas juntas dan una proteccion bastante solida.
+
+
+USO SIN MENU (avanzado, por linea de comandos)
+----------------------------------------------
+  python3 mta_obfuscator.py mi.lua -o mi.obf.lua --ip 203.0.113.7
+  Opciones: --no-strings  --no-minify  --no-wrap  --ip IP (repetible)
