@@ -28,7 +28,7 @@ Aplica varias **capas** de protección, que puedes activar o desactivar desde el
 En tu VPS, como root (cambia `TU_USUARIO` por tu usuario de GitHub):
 
 ```bash
-curl -sL https://raw.githubusercontent.com/TU_USUARIO/compilador-lua-mta/main/setup.sh | bash
+curl -sL https://raw.githubusercontent.com/2025-0181-spec/compilador-lua-mta/main/setup.sh | bash
 ```
 
 > Antes de usar esta línea debes tener el repositorio **subido y público** en GitHub,
@@ -44,7 +44,7 @@ compilador
 ### Alternativa: clonando el repo
 
 ```bash
-git clone https://github.com/TU_USUARIO/compilador-lua-mta.git
+git clone https://github.com/2025-0181-spec/compilador-lua-mta.git
 cd compilador-lua-mta
 bash instalar.sh
 ```

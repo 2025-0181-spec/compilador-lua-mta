@@ -294,44 +294,78 @@ def wrap_loader(code, rng):
     return "\n".join(parts)
 
 
-def inject_ip_guard(code, allowed_ips, rng):
+def inject_license_guard(code, allowed_ips, rng, mode="local", url=""):
     """Envuelve el codigo del usuario en un guardia de licencia por IP.
 
     El guardia averigua la IP publica del servidor con fetchRemote y SOLO
-    ejecuta el codigo real si esa IP esta en la lista permitida. Si no,
-    detiene el recurso. Pensado para scripts del lado del SERVIDOR.
+    ejecuta el codigo real si esa IP tiene permiso. Pensado para scripts
+    del lado del SERVIDOR.
+
+    mode="local":  la lista de IPs va incrustada en el archivo. Bloquear
+                   una IP requiere recompilar.
+    mode="remote": el guardia consulta una URL (que tu alojas) cada vez que
+                   arranca el recurso. Para bloquear, editas esa lista; no
+                   hay que recompilar nada.
+
+    Formato del archivo remoto (texto plano, facil de editar):
+        return {["1.2.3.4"]=true,["5.6.7.8"]=false}
     """
     sfx = "".join(rng.choice("abcdef0123456789") for _ in range(6))
-    allow = "_al" + sfx
     main = "_mn" + sfx
-    ok = "_ok" + sfx
-    ran = "_rn" + sfx
+    deny = "_dn" + sfx
+    check = "_ck" + sfx
     urls = "_ur" + sfx
     idx = "_ix" + sfx
     q = "_q" + sfx
-    ips = ",".join('["%s"]=true' % ip.strip() for ip in allowed_ips if ip.strip())
+
     g = []
     g.append("do")
-    g.append("local %s={%s}" % (allow, ips))
-    g.append("local %s=false" % ran)
+    g.append("local %s=false" % ("_rn" + sfx))
+    ran = "_rn" + sfx
     g.append("local function %s()" % main)
     g.append(code)
     g.append("end")
-    g.append("local function %s(ip)" % ok)
-    g.append("ip=tostring(ip):gsub('%s+','')")
-    g.append("if %s[ip] then if not %s then %s=true %s() end" % (allow, ran, ran, main))
-    g.append("else if outputServerLog then outputServerLog('[LICENCIA] IP no autorizada: '..tostring(ip)) end")
-    g.append("local r=getThisResource and getThisResource() if r and stopResource then stopResource(r) end end")
+    # denegar: avisa y apaga el recurso
+    g.append("local function %s(m)" % deny)
+    g.append("if outputServerLog then outputServerLog('[LICENCIA] '..tostring(m)) end")
+    g.append("local r=getThisResource and getThisResource() if r and stopResource then stopResource(r) end")
     g.append("end")
+
+    if mode == "remote":
+        # La lista esta en una URL remota; se consulta en cada arranque.
+        g.append("local function %s(ip)" % check)
+        g.append("ip=tostring(ip):gsub('%s+','')")
+        g.append("if not fetchRemote then return end")
+        g.append("fetchRemote('%s',function(data,info)" % url.replace("'", ""))
+        g.append("local good if type(info)=='table' then good=(info.success==true) else good=(info==0) end")
+        g.append("if not good or not data then %s('No se pudo leer la licencia') return end" % deny)
+        g.append("local f=loadstring(tostring(data))")
+        g.append("local lic=type(f)=='function' and f() or nil")
+        g.append("if type(lic)=='table' and lic[ip]==true then if not %s then %s=true %s() end" % (ran, ran, main))
+        g.append("else %s('IP no autorizada o bloqueada: '..ip) end" % deny)
+        g.append("end)")
+        g.append("end")
+    else:
+        # Lista incrustada (local)
+        allow = "_al" + sfx
+        ips = ",".join('["%s"]=true' % ip.strip() for ip in allowed_ips if ip.strip())
+        g.append("local %s={%s}" % (allow, ips))
+        g.append("local function %s(ip)" % check)
+        g.append("ip=tostring(ip):gsub('%s+','')")
+        g.append("if %s[ip] then if not %s then %s=true %s() end" % (allow, ran, ran, main))
+        g.append("else %s('IP no autorizada: '..ip) end" % deny)
+        g.append("end")
+
+    # Parte comun: obtener la IP publica del servidor
     g.append("local %s={'https://api.ipify.org','https://ipv4.icanhazip.com','https://ifconfig.me/ip'}" % urls)
     g.append("local %s=0" % idx)
     g.append("local function %s()" % q)
     g.append("%s=%s+1" % (idx, idx))
-    g.append("if %s>#%s then if outputServerLog then outputServerLog('[LICENCIA] No se pudo verificar la IP del servidor') end return end" % (idx, urls))
+    g.append("if %s>#%s then %s('No se pudo obtener la IP del servidor') return end" % (idx, urls, deny))
     g.append("if not fetchRemote then return end")
     g.append("fetchRemote(%s[%s],function(data,info)" % (urls, idx))
     g.append("local good if type(info)=='table' then good=(info.success==true) else good=(info==0) end")
-    g.append("if good and data and #tostring(data)>0 then %s(data) else %s() end" % (ok, q))
+    g.append("if good and data and #tostring(data)>0 then %s(data) else %s() end" % (check, q))
     g.append("end)")
     g.append("end")
     g.append("%s()" % q)
@@ -339,11 +373,18 @@ def inject_ip_guard(code, allowed_ips, rng):
     return "\n".join(g)
 
 
+# Compatibilidad con el nombre anterior
+def inject_ip_guard(code, allowed_ips, rng):
+    return inject_license_guard(code, allowed_ips, rng, mode="local")
+
+
 def obfuscate(code, do_strings=True, do_minify=True, do_wrap=True,
-              ip_lock=False, allowed_ips=None, seed=None):
+              ip_lock=False, allowed_ips=None, license_mode="local",
+              license_url="", seed=None):
     rng = random.Random(seed)
     if ip_lock:
-        code = inject_ip_guard(code, allowed_ips or [], rng)
+        code = inject_license_guard(code, allowed_ips or [], rng,
+                                    mode=license_mode, url=license_url)
     if do_strings:
         code = encrypt_strings(code, rng)
     if do_minify:
