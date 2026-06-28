@@ -7,7 +7,7 @@
 set -euo pipefail
 
 # >>> EDITA ESTAS LINEAS con TU usuario y repositorio de GitHub <<<
-GH_USER="TU_USUARIO"
+GH_USER=2025-0181-spec/"
 GH_REPO="compilador-lua-mta"
 BRANCH="main"
 
