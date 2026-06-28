@@ -41,7 +41,7 @@ DEFAULT_CONFIG = {
     "license_url": "https://raw.githubusercontent.com/2025-0181-spec/compilador-lua-mta/main/licencias.lua",
     "bytecode": True,
     "obf_level": 3,
-    "test_mode": False,
+    "license_key": "",       # clave del sistema (doble proteccion); se genera sola
     "repo_raw": "https://raw.githubusercontent.com/2025-0181-spec/compilador-lua-mta/main",
     "gh_token": "",
     "gh_owner": "2025-0181-spec",
@@ -66,10 +66,18 @@ def cargar_config():
                     for ip in data["allowed_ips"]
                 ]
             cfg.pop("allowed_ips", None)
+            cfg.pop("test_mode", None)
+            if not cfg.get("license_key"):
+                import secrets
+                cfg["license_key"] = "SYS-" + secrets.token_hex(10).upper()
+                guardar_config(cfg)
             return cfg
         except Exception:
             pass
-    return dict(DEFAULT_CONFIG)
+    base = dict(DEFAULT_CONFIG)
+    import secrets
+    base["license_key"] = "SYS-" + secrets.token_hex(10).upper()
+    return base
 
 def ips_activas(cfg):
     """Lista de IPs con permiso (no bloqueadas)."""
@@ -161,34 +169,17 @@ def compilar_archivo(cfg, nombre):
         code = f.read()
     salida = os.path.join(OUTPUT_DIR, nombre)
 
-    if cfg.get("test_mode"):
-        # MODO PRUEBA: solo inyecta el guardia de licencia y deja el .lua LEGIBLE
-        # (sin bytecode ni capas de texto). Sirve para verificar la proteccion.
-        result = ob.obfuscate(
-            code,
-            do_strings=False, do_minify=False, do_wrap=False,
-            ip_lock=cfg["ip_lock"],
-            allowed_ips=ips_activas(cfg),
-            license_mode=cfg.get("license_mode", "remote"),
-            license_url=cfg.get("license_url", ""),
-        )
-        with open(salida, "w", encoding="utf-8") as f:
-            f.write(result)
-        return len(code), len(result), salida
-
     if cfg.get("bytecode"):
         # MODO PROFESIONAL (como Hyper): codigo limpio -> compilador oficial.
-        # NO aplicamos strings/minify/wrap porque solo inflan el bytecode.
-        # Lo unico que inyectamos (si toca) es el guardia de IP.
+        # Solo se inyecta el guardia de licencia (si el bloqueo esta activo).
         pre = ob.obfuscate(
             code,
             do_strings=False,
             do_minify=False,
             do_wrap=False,
             ip_lock=cfg["ip_lock"],
-            allowed_ips=ips_activas(cfg),
-            license_mode=cfg.get("license_mode", "remote"),
             license_url=cfg.get("license_url", ""),
+            license_key=cfg.get("license_key", ""),
         )
         ok, msg = compilar_bytecode(pre, salida, cfg.get("obf_level", 3))
         if not ok:
@@ -204,9 +195,8 @@ def compilar_archivo(cfg, nombre):
         do_minify=cfg["minify"],
         do_wrap=cfg["wrap"],
         ip_lock=cfg["ip_lock"],
-        allowed_ips=ips_activas(cfg),
-        license_mode=cfg.get("license_mode", "remote"),
         license_url=cfg.get("license_url", ""),
+        license_key=cfg.get("license_key", ""),
     )
     with open(salida, "w", encoding="utf-8") as f:
         f.write(result)
@@ -218,14 +208,13 @@ def compilar_todo(cfg):
         print("\n  No hay archivos .lua en la carpeta input/")
         print("  Copia ahi tus scripts y vuelve a intentar.")
         pausa(); return
-    modo = cfg.get("license_mode", "remote")
-    if cfg["ip_lock"] and modo == "local" and not ips_activas(cfg):
-        print("\n  AVISO: el bloqueo por IP esta activado (modo local) pero NO hay")
-        print("  IPs con permiso. Ningun servidor podria arrancar. Anade tu IP (opcion 4).")
+    if cfg["ip_lock"] and not cfg.get("license_url"):
+        print("\n  AVISO: el bloqueo esta activado pero sin URL de licencias configurada.")
         if input("  Compilar igualmente? (s/n): ").strip().lower() != "s":
             return
-    if cfg["ip_lock"] and modo == "remote" and not cfg.get("license_url"):
-        print("\n  AVISO: modo remoto activado pero sin URL de licencias configurada.")
+    if cfg["ip_lock"] and not cfg.get("licenses"):
+        print("\n  AVISO: no hay ningun servidor con licencia en el panel.")
+        print("  Si compilas asi, ningun servidor podra arrancar el recurso.")
         if input("  Compilar igualmente? (s/n): ").strip().lower() != "s":
             return
     print("")
@@ -266,20 +255,14 @@ def menu_capas(cfg):
     while True:
         os.system("clear")
         print("==== CAPAS DE PROTECCION ====\n")
-        print("  -- MODO PRUEBA --")
-        print("  9) Solo proteccion, SIN compilar (.lua legible) ... [%s]" % onoff(cfg.get("test_mode")))
-        print("\n  -- Compilacion oficial MTA (RECOMENDADO, como Hyper) --")
+        print("  -- Compilacion oficial MTA (RECOMENDADO, como Hyper) --")
         print("  4) Compilar a bytecode oficial ...... [%s]" % onoff(cfg["bytecode"]))
         print("  5) Nivel de ofuscacion (0-3) ........ [%d]" % cfg.get("obf_level", 3))
         print("\n  -- Capas de TEXTO (solo se usan si el bytecode esta en OFF) --")
         print("  1) Cifrar textos (strings) .......... [%s]" % onoff(cfg["strings"]))
         print("  2) Minificar (quitar espacios) ...... [%s]" % onoff(cfg["minify"]))
         print("  3) Cargador cifrado (loadstring) .... [%s]" % onoff(cfg["wrap"]))
-        if cfg.get("test_mode"):
-            print("\n  NOTA: MODO PRUEBA activo. Sale un .lua legible con solo el guardia")
-            print("        de licencia (sin bytecode). Ideal para verificar el bloqueo.")
-            print("        Acuerdate de activar el bloqueo en el Panel (opcion 4 del menu).")
-        elif cfg["bytecode"]:
+        if cfg["bytecode"]:
             print("\n  NOTA: con bytecode ON se compila el codigo LIMPIO (resultado")
             print("        compacto y profesional). Las capas 1-3 quedan ignoradas.")
         else:
@@ -291,7 +274,6 @@ def menu_capas(cfg):
         elif op == "2": cfg["minify"] = not cfg["minify"]
         elif op == "3": cfg["wrap"] = not cfg["wrap"]
         elif op == "4": cfg["bytecode"] = not cfg["bytecode"]
-        elif op == "9": cfg["test_mode"] = not cfg.get("test_mode")
         elif op == "5":
             v = input("  Nivel (0=ninguno, 3=maximo): ").strip()
             if v.isdigit() and 0 <= int(v) <= 3:
@@ -312,13 +294,17 @@ def es_ip_valida(ip):
 LICENSE_FILE = os.path.join(HERE, "licencias.lua")
 
 def contenido_licencias(cfg):
-    """Construye el texto del archivo de licencias."""
+    """Construye el texto del archivo de licencias.
+    Activa  -> la CLAVE del sistema (debe coincidir con la del recurso).
+    Bloqueada -> false.
+    """
+    key = cfg.get("license_key", "")
     pares = []
     coment = ["-- Archivo de licencias (modo remoto). Generado por el panel.",
-              "-- true = permitido, false = bloqueado.", ""]
+              "-- IP activa lleva la CLAVE del sistema; bloqueada = false.", ""]
     for e in cfg.get("licenses", []):
-        permitido = "false" if e.get("blocked") else "true"
-        pares.append('["%s"]=%s' % (e["ip"], permitido))
+        valor = "false" if e.get("blocked") else ('"%s"' % key)
+        pares.append('["%s"]=%s' % (e["ip"], valor))
         estado = "BLOQUEADO" if e.get("blocked") else "activa"
         coment.append("-- %-16s %-10s %-18s %s" % (
             e["ip"], estado, e.get("key", "-"), e.get("name", "")))
@@ -401,6 +387,7 @@ def menu_ip(cfg):
         print("==== PANEL DE LICENCIAS (remoto) ====\n")
         print("  Bloqueo: [%s]" % onoff(cfg["ip_lock"]).strip())
         print("  URL    : %s" % (cfg.get("license_url") or "(sin configurar)"))
+        print("  Clave   : %s  (doble proteccion: IP + clave)" % cfg.get("license_key", "(sin generar)"))
         gh = "conectado" if cfg.get("gh_token") else "NO configurado (subida manual)"
         print("  GitHub : %s" % gh)
         print("\n  Servidores con licencia (%d):" % len(cfg["licenses"]))
@@ -568,16 +555,12 @@ def menu_principal():
         print("  Salida  : %s" % OUTPUT_DIR)
         print("  Capas   : strings[%s] minify[%s] wrap[%s]" %
               (onoff(cfg["strings"]).strip(), onoff(cfg["minify"]).strip(), onoff(cfg["wrap"]).strip()))
-        if cfg.get("test_mode"):
-            print("  Modo    : PRUEBA (solo proteccion, .lua legible, sin compilar)")
-        else:
-            print("  Bytecode: [%s] nivel %d  (compilador oficial MTA)" %
-                  (onoff(cfg["bytecode"]).strip(), cfg.get("obf_level", 3)))
+        print("  Bytecode: [%s] nivel %d  (compilador oficial MTA)" %
+              (onoff(cfg["bytecode"]).strip(), cfg.get("obf_level", 3)))
         activos = len([e for e in cfg["licenses"] if not e.get("blocked")])
         bloqueados = len(cfg["licenses"]) - activos
-        print("  Licencia: [%s] modo %s  (%d activos, %d bloqueados)" %
-              (onoff(cfg["ip_lock"]).strip(), cfg.get("license_mode", "remote").upper(),
-               activos, bloqueados))
+        print("  Licencia: [%s] remoto  (%d activos, %d bloqueados)" %
+              (onoff(cfg["ip_lock"]).strip(), activos, bloqueados))
         print("\n-----------------------------------------")
         print("  1) Compilar TODO lo de input/")
         print("  2) Compilar un archivo concreto")

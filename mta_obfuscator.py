@@ -294,19 +294,18 @@ def wrap_loader(code, rng):
     return "\n".join(parts)
 
 
-def inject_license_guard(code, allowed_ips, rng, mode="local", url="", recheck_seconds=60):
-    """Envuelve el codigo del usuario en un guardia de licencia por IP.
+def inject_license_guard(code, rng, url, license_key, recheck_seconds=60):
+    """Guardia de licencia REMOTO con DOBLE proteccion (IP + clave de licencia).
 
-    - Comprueba la licencia al ARRANCAR (si no es valida, el recurso no inicia).
-    - En modo remoto, RE-CHEQUEA cada 'recheck_seconds' mientras corre: si
-      bloqueas la IP, el recurso que ya estaba corriendo se apaga solo.
-    - Muestra un mensaje en el DEBUG de MTA explicando que falta licencia.
+    - Al arrancar y cada 'recheck_seconds', consulta tu lista en la URL.
+    - Solo ejecuta el codigo si la IP esta registrada Y su clave coincide con la
+      clave del sistema incrustada en el recurso.
+    - Si la licencia no es valida o no se puede verificar, el codigo NUNCA corre
+      e intenta apagar el recurso (con reintentos).
+    - Mensajes en el debug de MTA: verde (activa) / rojo (denegada).
 
-    mode="local":  la lista va incrustada (bloquear = recompilar).
-    mode="remote": consulta una URL tuya (bloquear = editar la lista, sin recompilar).
-
-    Formato del archivo remoto:  return {["1.2.3.4"]=true,["5.6.7.8"]=false}
-    Pensado para scripts del lado del SERVIDOR.
+    Formato del archivo remoto:  return {["1.2.3.4"]="CLAVE",["5.6.7.8"]=false}
+    Solo para scripts del lado del SERVIDOR.
     """
     sfx = "".join(rng.choice("abcdef0123456789") for _ in range(6))
     main = "_mn" + sfx
@@ -363,55 +362,41 @@ def inject_license_guard(code, allowed_ips, rng, mode="local", url="", recheck_s
     g.append("if not _r then %s(cb,i+1) end" % getip)
     g.append("end")
 
-    if mode == "remote":
-        safe_url = url.replace("'", "")
-        g.append("local function %s(primera)" % verify)
-        g.append("%s(function(ip)" % getip)
-        g.append("if not ip then if primera then %s('No se pudo verificar la IP (revisa ACL: function.fetchRemote)') end return end" % deny)
-        g.append("if not fetchRemote then return end")
-        g.append("local _u='%s'" % safe_url)
-        g.append("local _sep=_u:find('?',1,true) and '&' or '?'")
-        g.append("_u=_u.._sep..'_='..tostring(getTickCount and getTickCount() or 0)")
-        g.append("local _r2=fetchRemote(_u,function(data,info)")
-        g.append("local ok if type(info)=='table' then ok=(info.success==true) else ok=(info==0) end")
-        g.append("if not ok or not data then if primera then %s('No se pudo contactar el sistema de licencias') end return end" % deny)
-        g.append("local f=loadstring(tostring(data))")
-        g.append("local lic=type(f)=='function' and f() or nil")
-        g.append("if type(lic)=='table' and lic[ip]==true then")
-        g.append("if not %s then %s=true %s() end" % (started, started, activar))
-        g.append("else %s('La IP '..ip..' no tiene una licencia activa (bloqueada o no registrada)') end" % deny)
-        g.append("end)")
-        g.append("if not _r2 then if primera then %s('No se pudo contactar el sistema de licencias (revisa ACL: function.fetchRemote)') end end" % deny)
-        g.append("end)")
-        g.append("end")
-        g.append("%s(true)" % verify)  # chequeo al arrancar
-        g.append("if setTimer then setTimer(function() %s(false) end,%d,0) end" % (verify, ms))  # re-chequeo periodico
-    else:
-        allow = "_al" + sfx
-        ips = ",".join('["%s"]=true' % ip.strip() for ip in allowed_ips if ip.strip())
-        g.append("local %s={%s}" % (allow, ips))
-        g.append("%s(function(ip)" % getip)
-        g.append("if not ip then %s('No se pudo verificar la IP (revisa ACL: function.fetchRemote)') return end" % deny)
-        g.append("if %s[ip] then if not %s then %s=true %s() end" % (allow, started, started, activar))
-        g.append("else %s('La IP '..ip..' no esta autorizada') end" % deny)
-        g.append("end)")
+    safe_url = url.replace("'", "")
+    safe_key = str(license_key).replace("'", "")
+    g.append("local function %s(primera)" % verify)
+    g.append("%s(function(ip)" % getip)
+    g.append("if not ip then if primera then %s('No se pudo verificar la IP (revisa ACL: function.fetchRemote)') end return end" % deny)
+    g.append("if not fetchRemote then return end")
+    g.append("local _u='%s'" % safe_url)
+    g.append("local _sep=_u:find('?',1,true) and '&' or '?'")
+    g.append("_u=_u.._sep..'_='..tostring(getTickCount and getTickCount() or 0)")
+    g.append("local _r2=fetchRemote(_u,function(data,info)")
+    g.append("local ok if type(info)=='table' then ok=(info.success==true) else ok=(info==0) end")
+    g.append("if not ok or not data then if primera then %s('No se pudo contactar el sistema de licencias') end return end" % deny)
+    g.append("local f=loadstring(tostring(data))")
+    g.append("local lic=type(f)=='function' and f() or nil")
+    # DOBLE PROTECCION: la IP debe estar registrada Y su clave coincidir
+    g.append("if type(lic)=='table' and lic[ip]=='%s' then" % safe_key)
+    g.append("if not %s then %s=true %s() end" % (started, started, activar))
+    g.append("else %s('La IP '..ip..' no tiene licencia valida (bloqueada, no registrada o clave incorrecta)') end" % deny)
+    g.append("end)")
+    g.append("if not _r2 then if primera then %s('No se pudo contactar el sistema de licencias (revisa ACL: function.fetchRemote)') end end" % deny)
+    g.append("end)")
+    g.append("end")
+    g.append("%s(true)" % verify)
+    g.append("if setTimer then setTimer(function() %s(false) end,%d,0) end" % (verify, ms))
 
     g.append("end")
     return "\n".join(g)
 
 
-# Compatibilidad con el nombre anterior
-def inject_ip_guard(code, allowed_ips, rng):
-    return inject_license_guard(code, allowed_ips, rng, mode="local")
-
-
 def obfuscate(code, do_strings=True, do_minify=True, do_wrap=True,
-              ip_lock=False, allowed_ips=None, license_mode="local",
-              license_url="", seed=None):
+              ip_lock=False, allowed_ips=None, license_mode="remote",
+              license_url="", license_key="", seed=None):
     rng = random.Random(seed)
     if ip_lock:
-        code = inject_license_guard(code, allowed_ips or [], rng,
-                                    mode=license_mode, url=license_url)
+        code = inject_license_guard(code, rng, license_url, license_key)
     if do_strings:
         code = encrypt_strings(code, rng)
     if do_minify:
