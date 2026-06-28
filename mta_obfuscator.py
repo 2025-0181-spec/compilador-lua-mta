@@ -334,7 +334,12 @@ def inject_license_guard(code, allowed_ips, rng, mode="local", url="", recheck_s
     g.append("if outputDebugString then outputDebugString(m,1) end")
     g.append("if outputServerLog then outputServerLog(m) end")
     g.append("end")
-    g.append("local r=getThisResource and getThisResource() if r and stopResource then stopResource(r) end")
+    g.append("local r=getThisResource and getThisResource()")
+    g.append("if r and stopResource then")
+    g.append("stopResource(r)")  # intento inmediato
+    # reintento diferido: el recurso no se puede apagar mientras aun esta arrancando
+    g.append("if setTimer then setTimer(function() if stopResource and r then stopResource(r) end end,1500,1) end")
+    g.append("end")
     g.append("end")
 
     # helper: obtener la IP publica del servidor (con varios servicios de respaldo)
