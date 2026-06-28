@@ -13,6 +13,7 @@ Arrancar:   python3 compilador.py
 import os
 import sys
 import json
+import subprocess
 
 # Importamos el motor de ofuscacion (debe estar en la misma carpeta)
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -23,12 +24,21 @@ INPUT_DIR = os.path.join(HERE, "input")
 OUTPUT_DIR = os.path.join(HERE, "output")
 CONFIG_FILE = os.path.join(HERE, "config.json")
 
+# URL del compilador OFICIAL de MTA (devuelve bytecode = el "warning de binario")
+MTA_LUAC_URL = "https://luac.multitheftauto.com/"
+
+# Valores por defecto: receta PROFESIONAL y LIGERA
+#   minificar + bytecode oficial nivel 3.
+# Las capas pesadas (strings/wrap) van apagadas porque inflan el archivo
+# y son redundantes una vez tienes bytecode. Puedes activarlas si quieres.
 DEFAULT_CONFIG = {
-    "strings": True,
+    "strings": False,
     "minify": True,
-    "wrap": True,
+    "wrap": False,
     "ip_lock": False,
     "allowed_ips": [],
+    "bytecode": True,
+    "obf_level": 3,
 }
 
 # --------------------------------------------------------------------------
@@ -66,10 +76,54 @@ def pausa():
 
 # --------------------------------------------------------------------------
 
+def compilar_bytecode(src_text, out_path, level):
+    """Envia el codigo al compilador OFICIAL de MTA y guarda el bytecode.
+
+    Devuelve (ok, mensaje). El bytecode empieza por el byte 0x1B; si la
+    respuesta es texto, es un error del compilador y lo devolvemos.
+    """
+    tmp = out_path + ".src.tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        f.write(src_text)
+    try:
+        cmd = [
+            "curl", "-s", "-X", "POST",
+            "-F", "compile=1",
+            "-F", "debug=0",
+            "-F", "obfuscate=%d" % int(level),
+            "-F", "luasource=@%s" % tmp,
+            MTA_LUAC_URL,
+            "-o", out_path,
+        ]
+        r = subprocess.run(cmd, capture_output=True, timeout=90)
+        if r.returncode != 0:
+            return False, "curl fallo: " + r.stderr.decode("utf-8", "replace")[:200]
+        if not os.path.exists(out_path) or os.path.getsize(out_path) == 0:
+            return False, "El compilador devolvio una respuesta vacia (sin internet?)"
+        with open(out_path, "rb") as f:
+            head = f.read(4)
+        if head[:1] == b"\x1b":
+            return True, ""
+        # No es bytecode: leer el texto de error que devolvio la API
+        with open(out_path, "rb") as f:
+            msg = f.read(400).decode("utf-8", "replace").strip()
+        return False, "El compilador rechazo el script: " + msg[:200]
+    except FileNotFoundError:
+        return False, "No se encontro 'curl'. Instalalo con: apt install curl -y"
+    except subprocess.TimeoutExpired:
+        return False, "El compilador tardo demasiado (timeout)."
+    finally:
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+
+
 def compilar_archivo(cfg, nombre):
     ruta = os.path.join(INPUT_DIR, nombre)
     with open(ruta, "r", encoding="utf-8") as f:
         code = f.read()
+    # 1) Capas locales (minify, y opcionalmente strings/wrap/guardia IP)
     result = ob.obfuscate(
         code,
         do_strings=cfg["strings"],
@@ -79,6 +133,16 @@ def compilar_archivo(cfg, nombre):
         allowed_ips=cfg["allowed_ips"],
     )
     salida = os.path.join(OUTPUT_DIR, nombre)
+    # 2) Bytecode oficial de MTA (opcional)
+    if cfg.get("bytecode"):
+        ok, msg = compilar_bytecode(result, salida, cfg.get("obf_level", 3))
+        if not ok:
+            # Si falla, guardamos al menos la version ofuscada en texto
+            with open(salida, "w", encoding="utf-8") as f:
+                f.write(result)
+            raise RuntimeError(msg + " (se guardo solo ofuscado, sin bytecode)")
+        return len(code), os.path.getsize(salida), salida
+    # Sin bytecode: guardamos el texto ofuscado
     with open(salida, "w", encoding="utf-8") as f:
         f.write(result)
     return len(code), len(result), salida
@@ -117,9 +181,12 @@ def compilar_uno(cfg):
         return
     idx = int(sel) - 1
     if 0 <= idx < len(archivos):
-        o, n, salida = compilar_archivo(cfg, archivos[idx])
-        print("\n  [OK] %s  (%d -> %d bytes)" % (archivos[idx], o, n))
-        print("  Guardado en: %s" % salida)
+        try:
+            o, n, salida = compilar_archivo(cfg, archivos[idx])
+            print("\n  [OK] %s  (%d -> %d bytes)" % (archivos[idx], o, n))
+            print("  Guardado en: %s" % salida)
+        except Exception as e:
+            print("\n  [ERROR] %s: %s" % (archivos[idx], e))
     pausa()
 
 # --------------------------------------------------------------------------
@@ -128,14 +195,26 @@ def menu_capas(cfg):
     while True:
         os.system("clear")
         print("==== CAPAS DE PROTECCION ====\n")
-        print("  1) Cifrar textos (strings) .......... [%s]" % onoff(cfg["strings"]))
+        print("  -- Capas locales --")
+        print("  1) Cifrar textos (strings) .......... [%s]   (infla el peso)" % onoff(cfg["strings"]))
         print("  2) Minificar (quitar espacios) ...... [%s]" % onoff(cfg["minify"]))
-        print("  3) Cargador cifrado (loadstring) .... [%s]" % onoff(cfg["wrap"]))
+        print("  3) Cargador cifrado (loadstring) .... [%s]   (infla el peso)" % onoff(cfg["wrap"]))
+        print("\n  -- Compilacion oficial MTA (bytecode = el warning de binario) --")
+        print("  4) Compilar a bytecode oficial ...... [%s]" % onoff(cfg["bytecode"]))
+        print("  5) Nivel de ofuscacion (0-3) ........ [%d]" % cfg.get("obf_level", 3))
+        if cfg["bytecode"] and (cfg["strings"] or cfg["wrap"]):
+            print("\n  NOTA: con bytecode activo, las capas 1 y 3 solo aumentan el")
+            print("        peso sin aportar mucho. Para algo ligero, dejalas en OFF.")
         print("\n  0) Volver")
         op = input("\n  Opcion: ").strip()
         if op == "1": cfg["strings"] = not cfg["strings"]
         elif op == "2": cfg["minify"] = not cfg["minify"]
         elif op == "3": cfg["wrap"] = not cfg["wrap"]
+        elif op == "4": cfg["bytecode"] = not cfg["bytecode"]
+        elif op == "5":
+            v = input("  Nivel (0=ninguno, 3=maximo): ").strip()
+            if v.isdigit() and 0 <= int(v) <= 3:
+                cfg["obf_level"] = int(v)
         elif op == "0":
             guardar_config(cfg); return
         guardar_config(cfg)
@@ -208,6 +287,8 @@ def menu_principal():
         print("  Salida  : %s" % OUTPUT_DIR)
         print("  Capas   : strings[%s] minify[%s] wrap[%s]" %
               (onoff(cfg["strings"]).strip(), onoff(cfg["minify"]).strip(), onoff(cfg["wrap"]).strip()))
+        print("  Bytecode: [%s] nivel %d  (compilador oficial MTA)" %
+              (onoff(cfg["bytecode"]).strip(), cfg.get("obf_level", 3)))
         print("  IP-lock : [%s]  (%d IPs permitidas)" %
               (onoff(cfg["ip_lock"]).strip(), len(cfg["allowed_ips"])))
         print("\n-----------------------------------------")
