@@ -294,81 +294,86 @@ def wrap_loader(code, rng):
     return "\n".join(parts)
 
 
-def inject_license_guard(code, allowed_ips, rng, mode="local", url=""):
+def inject_license_guard(code, allowed_ips, rng, mode="local", url="", recheck_seconds=300):
     """Envuelve el codigo del usuario en un guardia de licencia por IP.
 
-    El guardia averigua la IP publica del servidor con fetchRemote y SOLO
-    ejecuta el codigo real si esa IP tiene permiso. Pensado para scripts
-    del lado del SERVIDOR.
+    - Comprueba la licencia al ARRANCAR (si no es valida, el recurso no inicia).
+    - En modo remoto, RE-CHEQUEA cada 'recheck_seconds' mientras corre: si
+      bloqueas la IP, el recurso que ya estaba corriendo se apaga solo.
+    - Muestra un mensaje en el DEBUG de MTA explicando que falta licencia.
 
-    mode="local":  la lista de IPs va incrustada en el archivo. Bloquear
-                   una IP requiere recompilar.
-    mode="remote": el guardia consulta una URL (que tu alojas) cada vez que
-                   arranca el recurso. Para bloquear, editas esa lista; no
-                   hay que recompilar nada.
+    mode="local":  la lista va incrustada (bloquear = recompilar).
+    mode="remote": consulta una URL tuya (bloquear = editar la lista, sin recompilar).
 
-    Formato del archivo remoto (texto plano, facil de editar):
-        return {["1.2.3.4"]=true,["5.6.7.8"]=false}
+    Formato del archivo remoto:  return {["1.2.3.4"]=true,["5.6.7.8"]=false}
+    Pensado para scripts del lado del SERVIDOR.
     """
     sfx = "".join(rng.choice("abcdef0123456789") for _ in range(6))
     main = "_mn" + sfx
     deny = "_dn" + sfx
-    check = "_ck" + sfx
+    started = "_st" + sfx
+    getip = "_gi" + sfx
     urls = "_ur" + sfx
-    idx = "_ix" + sfx
-    q = "_q" + sfx
+    verify = "_vf" + sfx
+    ms = int(recheck_seconds) * 1000
 
     g = []
     g.append("do")
-    g.append("local %s=false" % ("_rn" + sfx))
-    ran = "_rn" + sfx
+    g.append("local %s=false" % started)
     g.append("local function %s()" % main)
     g.append(code)
     g.append("end")
-    # denegar: avisa y apaga el recurso
-    g.append("local function %s(m)" % deny)
-    g.append("if outputServerLog then outputServerLog('[LICENCIA] '..tostring(m)) end")
+
+    # apagar: mensaje en debug (nivel 1 = error rojo) + log + detener recurso
+    g.append("local function %s(motivo)" % deny)
+    g.append("local m='[LICENCIA] Este recurso requiere una licencia activa. '..tostring(motivo)")
+    g.append("if outputDebugString then outputDebugString(m,1) end")
+    g.append("if outputServerLog then outputServerLog(m) end")
     g.append("local r=getThisResource and getThisResource() if r and stopResource then stopResource(r) end")
     g.append("end")
 
+    # helper: obtener la IP publica del servidor (con varios servicios de respaldo)
+    g.append("local %s={'https://api.ipify.org','https://ipv4.icanhazip.com','https://ifconfig.me/ip'}" % urls)
+    g.append("local function %s(cb,i)" % getip)
+    g.append("i=i or 1")
+    g.append("if i>#%s or not fetchRemote then cb(nil) return end" % urls)
+    g.append("fetchRemote(%s[i],function(data,info)" % urls)
+    g.append("local ok if type(info)=='table' then ok=(info.success==true) else ok=(info==0) end")
+    g.append("if ok and data and #tostring(data)>0 then cb((tostring(data):gsub('%%s+',''))) else %s(cb,i+1) end" % getip)
+    g.append("end)")
+    g.append("end")
+
     if mode == "remote":
-        # La lista esta en una URL remota; se consulta en cada arranque.
-        g.append("local function %s(ip)" % check)
-        g.append("ip=tostring(ip):gsub('%s+','')")
+        safe_url = url.replace("'", "")
+        g.append("local function %s(primera)" % verify)
+        g.append("%s(function(ip)" % getip)
+        g.append("if not ip then if primera then %s('No se pudo verificar la IP del servidor') end return end" % deny)
         g.append("if not fetchRemote then return end")
-        g.append("fetchRemote('%s',function(data,info)" % url.replace("'", ""))
-        g.append("local good if type(info)=='table' then good=(info.success==true) else good=(info==0) end")
-        g.append("if not good or not data then %s('No se pudo leer la licencia') return end" % deny)
+        g.append("fetchRemote('%s',function(data,info)" % safe_url)
+        g.append("local ok if type(info)=='table' then ok=(info.success==true) else ok=(info==0) end")
+        # Si falla la red en un re-chequeo, NO apagamos (evita cortes por glitches);
+        # solo en el arranque se exige verificacion (fail-closed).
+        g.append("if not ok or not data then if primera then %s('No se pudo contactar el sistema de licencias') end return end" % deny)
         g.append("local f=loadstring(tostring(data))")
         g.append("local lic=type(f)=='function' and f() or nil")
-        g.append("if type(lic)=='table' and lic[ip]==true then if not %s then %s=true %s() end" % (ran, ran, main))
-        g.append("else %s('IP no autorizada o bloqueada: '..ip) end" % deny)
+        g.append("if type(lic)=='table' and lic[ip]==true then")
+        g.append("if not %s then %s=true %s() end" % (started, started, main))
+        g.append("else %s('La IP '..ip..' no tiene una licencia activa (bloqueada o no registrada)') end" % deny)
+        g.append("end)")
         g.append("end)")
         g.append("end")
+        g.append("%s(true)" % verify)  # chequeo al arrancar
+        g.append("if setTimer then setTimer(function() %s(false) end,%d,0) end" % (verify, ms))  # re-chequeo periodico
     else:
-        # Lista incrustada (local)
         allow = "_al" + sfx
         ips = ",".join('["%s"]=true' % ip.strip() for ip in allowed_ips if ip.strip())
         g.append("local %s={%s}" % (allow, ips))
-        g.append("local function %s(ip)" % check)
-        g.append("ip=tostring(ip):gsub('%s+','')")
-        g.append("if %s[ip] then if not %s then %s=true %s() end" % (allow, ran, ran, main))
-        g.append("else %s('IP no autorizada: '..ip) end" % deny)
-        g.append("end")
+        g.append("%s(function(ip)" % getip)
+        g.append("if not ip then %s('No se pudo verificar la IP del servidor') return end" % deny)
+        g.append("if %s[ip] then if not %s then %s=true %s() end" % (allow, started, started, main))
+        g.append("else %s('La IP '..ip..' no esta autorizada') end" % deny)
+        g.append("end)")
 
-    # Parte comun: obtener la IP publica del servidor
-    g.append("local %s={'https://api.ipify.org','https://ipv4.icanhazip.com','https://ifconfig.me/ip'}" % urls)
-    g.append("local %s=0" % idx)
-    g.append("local function %s()" % q)
-    g.append("%s=%s+1" % (idx, idx))
-    g.append("if %s>#%s then %s('No se pudo obtener la IP del servidor') return end" % (idx, urls, deny))
-    g.append("if not fetchRemote then return end")
-    g.append("fetchRemote(%s[%s],function(data,info)" % (urls, idx))
-    g.append("local good if type(info)=='table' then good=(info.success==true) else good=(info==0) end")
-    g.append("if good and data and #tostring(data)>0 then %s(data) else %s() end" % (check, q))
-    g.append("end)")
-    g.append("end")
-    g.append("%s()" % q)
     g.append("end")
     return "\n".join(g)
 

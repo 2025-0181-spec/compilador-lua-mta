@@ -284,16 +284,27 @@ LICENSE_FILE = os.path.join(HERE, "licencias.lua")
 def exportar_licencias(cfg):
     """Genera el archivo de licencias para el modo remoto."""
     pares = []
-    coment = []
+    coment = ["-- Archivo de licencias (modo remoto). Editalo y subelo a tu URL.",
+              "-- Para bloquear: cambia true por false en la IP correspondiente.", ""]
     for e in cfg.get("licenses", []):
         permitido = "false" if e.get("blocked") else "true"
         pares.append('["%s"]=%s' % (e["ip"], permitido))
-        estado = "BLOQUEADO" if e.get("blocked") else "permitido"
-        coment.append("-- %-16s %-12s %s" % (e["ip"], estado, e.get("name", "")))
+        estado = "BLOQUEADO" if e.get("blocked") else "activa"
+        coment.append("-- %-16s %-10s %-18s %s" % (
+            e["ip"], estado, e.get("key", "-"), e.get("name", "")))
     contenido = "\n".join(coment) + "\nreturn {" + ",".join(pares) + "}\n"
     with open(LICENSE_FILE, "w", encoding="utf-8") as f:
         f.write(contenido)
     return LICENSE_FILE
+
+import random as _random
+import datetime as _dt
+
+def generar_id_licencia():
+    """Genera un ID de licencia unico, tipo HX-XXXX-XXXX-XXXX."""
+    chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+    grupos = ["".join(_random.choice(chars) for _ in range(4)) for _ in range(3)]
+    return "HX-" + "-".join(grupos)
 
 def menu_ip(cfg):
     while True:
@@ -303,19 +314,20 @@ def menu_ip(cfg):
         print("  Bloqueo: [%s]    Modo: %s" % (onoff(cfg["ip_lock"]).strip(), modo.upper()))
         if modo == "remote":
             print("  URL    : %s" % (cfg.get("license_url") or "(sin configurar)"))
-        print("\n  Servidores registrados (%d):" % len(cfg["licenses"]))
+        print("\n  Servidores con licencia (%d):" % len(cfg["licenses"]))
         if cfg["licenses"]:
-            print("    %-3s %-16s %-10s %s" % ("#", "IP", "ESTADO", "NOMBRE"))
+            print("    %-3s %-16s %-10s %-18s %s" % ("#", "IP", "ESTADO", "LICENCIA", "NOMBRE"))
             for i, e in enumerate(cfg["licenses"], 1):
-                estado = "BLOQUEADO" if e.get("blocked") else "activo"
-                print("    %-3d %-16s %-10s %s" % (i, e["ip"], estado, e.get("name", "")))
+                estado = "BLOQUEADO" if e.get("blocked") else "activa"
+                print("    %-3d %-16s %-10s %-18s %s" % (
+                    i, e["ip"], estado, e.get("key", "-"), e.get("name", "")))
         else:
             print("    (ninguno)")
         print("\n  1) Activar / desactivar el bloqueo")
-        print("  2) Anadir servidor (IP + nombre)")
+        print("  2) Anadir servidor (genera licencia)")
         print("  3) Bloquear / desbloquear un servidor")
         print("  4) Cambiar el nombre de un servidor")
-        print("  5) Quitar un servidor")
+        print("  5) Quitar un servidor (revoca su licencia)")
         print("  6) Modo de licencia (local / remoto)")
         print("  7) Generar archivo de licencias (modo remoto)")
         print("  0) Volver")
@@ -329,11 +341,24 @@ def menu_ip(cfg):
             if not es_ip_valida(ip):
                 print("  IP no valida (ejemplo: 203.0.113.7)"); pausa()
             elif any(e["ip"] == ip for e in cfg["licenses"]):
-                print("  Esa IP ya estaba registrada."); pausa()
+                print("  Esa IP ya tiene licencia."); pausa()
             else:
                 nombre = input("  Nombre para identificarla (ej: Servidor Juan): ").strip()
-                cfg["licenses"].append({"ip": ip, "name": nombre, "blocked": False})
-                print("  Anadido: %s (%s)" % (ip, nombre or "sin nombre")); pausa()
+                lic = {
+                    "ip": ip,
+                    "name": nombre,
+                    "blocked": False,
+                    "key": generar_id_licencia(),
+                    "created": _dt.date.today().isoformat(),
+                }
+                cfg["licenses"].append(lic)
+                print("\n  Licencia generada:")
+                print("    IP      : %s" % ip)
+                print("    Nombre  : %s" % (nombre or "(sin nombre)"))
+                print("    Licencia: %s" % lic["key"])
+                if cfg.get("license_mode") == "remote":
+                    print("\n  Recuerda regenerar y subir el archivo de licencias (opcion 7).")
+                pausa()
 
         elif op == "3":
             e = _elegir_licencia(cfg, "bloquear/desbloquear")
