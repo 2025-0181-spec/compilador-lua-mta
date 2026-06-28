@@ -37,8 +37,8 @@ DEFAULT_CONFIG = {
     "wrap": False,
     "ip_lock": False,
     "licenses": [],          # [{"ip": "1.2.3.4", "name": "Servidor X", "blocked": False}]
-    "license_mode": "local", # "local" (incrustada) o "remote" (URL)
-    "license_url": "",       # URL del archivo de licencias (modo remoto)
+    "license_mode": "remote", # "local" (incrustada) o "remote" (URL)
+    "license_url": "https://raw.githubusercontent.com/2025-0181-spec/compilador-lua-mta/main/licencias.lua",
     "bytecode": True,
     "obf_level": 3,
     "test_mode": False,
