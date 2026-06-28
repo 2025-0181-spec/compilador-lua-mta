@@ -43,6 +43,11 @@ DEFAULT_CONFIG = {
     "obf_level": 3,
     "test_mode": False,
     "repo_raw": "https://raw.githubusercontent.com/2025-0181-spec/compilador-lua-mta/main",
+    "gh_token": "",
+    "gh_owner": "2025-0181-spec",
+    "gh_repo": "compilador-lua-mta",
+    "gh_branch": "main",
+    "gh_path": "licencias.lua",
 }
 
 # --------------------------------------------------------------------------
@@ -164,7 +169,7 @@ def compilar_archivo(cfg, nombre):
             do_strings=False, do_minify=False, do_wrap=False,
             ip_lock=cfg["ip_lock"],
             allowed_ips=ips_activas(cfg),
-            license_mode=cfg.get("license_mode", "local"),
+            license_mode=cfg.get("license_mode", "remote"),
             license_url=cfg.get("license_url", ""),
         )
         with open(salida, "w", encoding="utf-8") as f:
@@ -182,7 +187,7 @@ def compilar_archivo(cfg, nombre):
             do_wrap=False,
             ip_lock=cfg["ip_lock"],
             allowed_ips=ips_activas(cfg),
-            license_mode=cfg.get("license_mode", "local"),
+            license_mode=cfg.get("license_mode", "remote"),
             license_url=cfg.get("license_url", ""),
         )
         ok, msg = compilar_bytecode(pre, salida, cfg.get("obf_level", 3))
@@ -200,7 +205,7 @@ def compilar_archivo(cfg, nombre):
         do_wrap=cfg["wrap"],
         ip_lock=cfg["ip_lock"],
         allowed_ips=ips_activas(cfg),
-        license_mode=cfg.get("license_mode", "local"),
+        license_mode=cfg.get("license_mode", "remote"),
         license_url=cfg.get("license_url", ""),
     )
     with open(salida, "w", encoding="utf-8") as f:
@@ -213,7 +218,7 @@ def compilar_todo(cfg):
         print("\n  No hay archivos .lua en la carpeta input/")
         print("  Copia ahi tus scripts y vuelve a intentar.")
         pausa(); return
-    modo = cfg.get("license_mode", "local")
+    modo = cfg.get("license_mode", "remote")
     if cfg["ip_lock"] and modo == "local" and not ips_activas(cfg):
         print("\n  AVISO: el bloqueo por IP esta activado (modo local) pero NO hay")
         print("  IPs con permiso. Ningun servidor podria arrancar. Anade tu IP (opcion 4).")
@@ -306,21 +311,71 @@ def es_ip_valida(ip):
 
 LICENSE_FILE = os.path.join(HERE, "licencias.lua")
 
-def exportar_licencias(cfg):
-    """Genera el archivo de licencias para el modo remoto."""
+def contenido_licencias(cfg):
+    """Construye el texto del archivo de licencias."""
     pares = []
-    coment = ["-- Archivo de licencias (modo remoto). Editalo y subelo a tu URL.",
-              "-- Para bloquear: cambia true por false en la IP correspondiente.", ""]
+    coment = ["-- Archivo de licencias (modo remoto). Generado por el panel.",
+              "-- true = permitido, false = bloqueado.", ""]
     for e in cfg.get("licenses", []):
         permitido = "false" if e.get("blocked") else "true"
         pares.append('["%s"]=%s' % (e["ip"], permitido))
         estado = "BLOQUEADO" if e.get("blocked") else "activa"
         coment.append("-- %-16s %-10s %-18s %s" % (
             e["ip"], estado, e.get("key", "-"), e.get("name", "")))
-    contenido = "\n".join(coment) + "\nreturn {" + ",".join(pares) + "}\n"
+    return "\n".join(coment) + "\nreturn {" + ",".join(pares) + "}\n"
+
+def exportar_licencias(cfg):
+    contenido = contenido_licencias(cfg)
     with open(LICENSE_FILE, "w", encoding="utf-8") as f:
         f.write(contenido)
     return LICENSE_FILE
+
+def _gh_headers(token):
+    return ["-H", "Authorization: Bearer " + token,
+            "-H", "Accept: application/vnd.github+json",
+            "-H", "User-Agent: compilador-lua-mta"]
+
+def subir_github(cfg):
+    """Sube el archivo de licencias a GitHub usando la API (token)."""
+    import base64
+    token = cfg.get("gh_token", "")
+    owner = cfg.get("gh_owner", "")
+    repo = cfg.get("gh_repo", "")
+    branch = cfg.get("gh_branch", "main")
+    path = cfg.get("gh_path", "licencias.lua")
+    if not (token and owner and repo):
+        return False, "Falta configurar GitHub (opcion 7 del panel)."
+    api = "https://api.github.com/repos/%s/%s/contents/%s" % (owner, repo, path)
+    # 1) obtener el sha actual del archivo (si existe)
+    sha = None
+    get = subprocess.run(["curl", "-fsSL"] + _gh_headers(token) + [api + "?ref=" + branch],
+                         capture_output=True)
+    if get.returncode == 0:
+        try:
+            sha = json.loads(get.stdout.decode("utf-8")).get("sha")
+        except Exception:
+            sha = None
+    # 2) subir el contenido nuevo
+    contenido = contenido_licencias(cfg)
+    body = {
+        "message": "Actualizar licencias",
+        "content": base64.b64encode(contenido.encode("utf-8")).decode("ascii"),
+        "branch": branch,
+    }
+    if sha:
+        body["sha"] = sha
+    put = subprocess.run(
+        ["curl", "-sS", "-X", "PUT"] + _gh_headers(token) + ["-d", json.dumps(body), api],
+        capture_output=True)
+    out = put.stdout.decode("utf-8", "replace")
+    if '"content"' in out and '"sha"' in out:
+        return True, "Lista subida a GitHub correctamente."
+    # extraer mensaje de error de la API
+    try:
+        msg = json.loads(out).get("message", out[:150])
+    except Exception:
+        msg = out[:150]
+    return False, "GitHub respondio: " + msg
 
 import random as _random
 import datetime as _dt
@@ -331,14 +386,23 @@ def generar_id_licencia():
     grupos = ["".join(_random.choice(chars) for _ in range(4)) for _ in range(3)]
     return "HX-" + "-".join(grupos)
 
+def _sync_github(cfg):
+    """Si GitHub esta configurado, sube la lista automaticamente."""
+    if cfg.get("gh_token"):
+        ok, msg = subir_github(cfg)
+        print("  %s %s" % ("[OK]" if ok else "[ERROR]", msg))
+    else:
+        exportar_licencias(cfg)
+        print("  (lista guardada en licencias.lua; subela a GitHub o configura el token en opcion 7)")
+
 def menu_ip(cfg):
     while True:
         os.system("clear")
-        modo = cfg.get("license_mode", "local")
-        print("==== PANEL DE LICENCIAS (control por IP) ====\n")
-        print("  Bloqueo: [%s]    Modo: %s" % (onoff(cfg["ip_lock"]).strip(), modo.upper()))
-        if modo == "remote":
-            print("  URL    : %s" % (cfg.get("license_url") or "(sin configurar)"))
+        print("==== PANEL DE LICENCIAS (remoto) ====\n")
+        print("  Bloqueo: [%s]" % onoff(cfg["ip_lock"]).strip())
+        print("  URL    : %s" % (cfg.get("license_url") or "(sin configurar)"))
+        gh = "conectado" if cfg.get("gh_token") else "NO configurado (subida manual)"
+        print("  GitHub : %s" % gh)
         print("\n  Servidores con licencia (%d):" % len(cfg["licenses"]))
         if cfg["licenses"]:
             print("    %-3s %-16s %-10s %-18s %s" % ("#", "IP", "ESTADO", "LICENCIA", "NOMBRE"))
@@ -353,8 +417,8 @@ def menu_ip(cfg):
         print("  3) Bloquear / desbloquear un servidor")
         print("  4) Cambiar el nombre de un servidor")
         print("  5) Quitar un servidor (revoca su licencia)")
-        print("  6) Modo de licencia (local / remoto)")
-        print("  7) Generar archivo de licencias (modo remoto)")
+        print("  6) SUBIR la lista a GitHub ahora")
+        print("  7) Configurar conexion con GitHub (token)")
         print("  0) Volver")
         op = input("\n  Opcion: ").strip()
 
@@ -370,28 +434,25 @@ def menu_ip(cfg):
             else:
                 nombre = input("  Nombre para identificarla (ej: Servidor Juan): ").strip()
                 lic = {
-                    "ip": ip,
-                    "name": nombre,
-                    "blocked": False,
-                    "key": generar_id_licencia(),
-                    "created": _dt.date.today().isoformat(),
+                    "ip": ip, "name": nombre, "blocked": False,
+                    "key": generar_id_licencia(), "created": _dt.date.today().isoformat(),
                 }
                 cfg["licenses"].append(lic)
+                guardar_config(cfg)
                 print("\n  Licencia generada:")
                 print("    IP      : %s" % ip)
                 print("    Nombre  : %s" % (nombre or "(sin nombre)"))
                 print("    Licencia: %s" % lic["key"])
-                if cfg.get("license_mode") == "remote":
-                    print("\n  Recuerda regenerar y subir el archivo de licencias (opcion 7).")
+                _sync_github(cfg)
                 pausa()
 
         elif op == "3":
             e = _elegir_licencia(cfg, "bloquear/desbloquear")
             if e:
                 e["blocked"] = not e.get("blocked")
+                guardar_config(cfg)
                 print("  %s -> %s" % (e["ip"], "BLOQUEADO" if e["blocked"] else "activo"))
-                if cfg.get("license_mode") == "remote":
-                    print("  (recuerda regenerar y subir el archivo de licencias, opcion 7)")
+                _sync_github(cfg)
                 pausa()
 
         elif op == "4":
@@ -404,28 +465,47 @@ def menu_ip(cfg):
             e = _elegir_licencia(cfg, "quitar")
             if e:
                 cfg["licenses"].remove(e)
-                print("  Quitado: %s" % e["ip"]); pausa()
+                guardar_config(cfg)
+                print("  Quitado: %s" % e["ip"])
+                _sync_github(cfg)
+                pausa()
 
         elif op == "6":
-            print("\n  1) LOCAL  (la lista va dentro del archivo; bloquear = recompilar)")
-            print("  2) REMOTO (consulta una URL tuya; bloquear = editar la lista, sin recompilar)")
-            m = input("  Elige modo: ").strip()
-            if m == "1":
-                cfg["license_mode"] = "local"
-            elif m == "2":
-                cfg["license_mode"] = "remote"
-                url = input("  URL del archivo de licencias (https://...): ").strip()
-                if url:
-                    cfg["license_url"] = url
+            print("")
+            _sync_github(cfg)
             pausa()
 
         elif op == "7":
-            ruta = exportar_licencias(cfg)
-            print("\n  Archivo generado: %s" % ruta)
-            print("  Subelo a la URL que configuraste (ej: tu repo de GitHub).")
-            print("  Para bloquear a alguien luego: cambias su estado aqui,")
-            print("  regeneras este archivo y lo vuelves a subir. Sin recompilar.")
-            pausa()
+            os.system("clear")
+            print("==== CONEXION CON GITHUB ====\n")
+            print("  Permite que el menu suba la lista a GitHub solo (sin entrar a la web).")
+            print("  Necesitas un token con permiso de escritura en tu repo.")
+            print("  Crealo en: github.com -> Settings -> Developer settings ->")
+            print("             Personal access tokens (fine-grained) -> con permiso")
+            print("             'Contents: Read and write' en tu repo.\n")
+            print("  owner : %s" % cfg.get("gh_owner"))
+            print("  repo  : %s" % cfg.get("gh_repo"))
+            print("  branch: %s" % cfg.get("gh_branch"))
+            print("  path  : %s" % cfg.get("gh_path"))
+            print("  token : %s" % ("(guardado)" if cfg.get("gh_token") else "(vacio)"))
+            print("\n  1) Pegar/cambiar token")
+            print("  2) Cambiar owner/repo/branch")
+            print("  0) Volver")
+            s = input("\n  Opcion: ").strip()
+            if s == "1":
+                t = input("  Pega tu token (se guarda local, no se sube): ").strip()
+                if t:
+                    cfg["gh_token"] = t
+                    print("  Token guardado.")
+                pausa()
+            elif s == "2":
+                o = input("  owner (%s): " % cfg.get("gh_owner")).strip()
+                r = input("  repo (%s): " % cfg.get("gh_repo")).strip()
+                b = input("  branch (%s): " % cfg.get("gh_branch")).strip()
+                if o: cfg["gh_owner"] = o
+                if r: cfg["gh_repo"] = r
+                if b: cfg["gh_branch"] = b
+                pausa()
 
         elif op == "0":
             guardar_config(cfg); return
@@ -496,7 +576,7 @@ def menu_principal():
         activos = len([e for e in cfg["licenses"] if not e.get("blocked")])
         bloqueados = len(cfg["licenses"]) - activos
         print("  Licencia: [%s] modo %s  (%d activos, %d bloqueados)" %
-              (onoff(cfg["ip_lock"]).strip(), cfg.get("license_mode", "local").upper(),
+              (onoff(cfg["ip_lock"]).strip(), cfg.get("license_mode", "remote").upper(),
                activos, bloqueados))
         print("\n-----------------------------------------")
         print("  1) Compilar TODO lo de input/")

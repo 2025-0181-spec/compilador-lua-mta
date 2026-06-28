@@ -294,7 +294,7 @@ def wrap_loader(code, rng):
     return "\n".join(parts)
 
 
-def inject_license_guard(code, allowed_ips, rng, mode="local", url="", recheck_seconds=300):
+def inject_license_guard(code, allowed_ips, rng, mode="local", url="", recheck_seconds=60):
     """Envuelve el codigo del usuario en un guardia de licencia por IP.
 
     - Comprueba la licencia al ARRANCAR (si no es valida, el recurso no inicia).
@@ -369,7 +369,10 @@ def inject_license_guard(code, allowed_ips, rng, mode="local", url="", recheck_s
         g.append("%s(function(ip)" % getip)
         g.append("if not ip then if primera then %s('No se pudo verificar la IP (revisa ACL: function.fetchRemote)') end return end" % deny)
         g.append("if not fetchRemote then return end")
-        g.append("local _r2=fetchRemote('%s',function(data,info)" % safe_url)
+        g.append("local _u='%s'" % safe_url)
+        g.append("local _sep=_u:find('?',1,true) and '&' or '?'")
+        g.append("_u=_u.._sep..'_='..tostring(getTickCount and getTickCount() or 0)")
+        g.append("local _r2=fetchRemote(_u,function(data,info)")
         g.append("local ok if type(info)=='table' then ok=(info.success==true) else ok=(info==0) end")
         g.append("if not ok or not data then if primera then %s('No se pudo contactar el sistema de licencias') end return end" % deny)
         g.append("local f=loadstring(tostring(data))")
