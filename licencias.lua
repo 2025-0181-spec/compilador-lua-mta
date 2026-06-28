@@ -2,5 +2,4 @@
 -- IP activa lleva la CLAVE del sistema; bloqueada = false.
 
 -- 172.93.111.28    activa     HX-BEA3-WAL8-HRC8  MG
--- 172.93.111.12    activa     HX-RB6F-V98U-BKBA  mg4
-return {["172.93.111.28"]="SYS-95ECC33BDBD16565F5CD",["172.93.111.12"]="SYS-95ECC33BDBD16565F5CD"}
+return {["172.93.111.28"]="SYS-95ECC33BDBD16565F5CD"}
