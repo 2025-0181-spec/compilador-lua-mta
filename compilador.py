@@ -41,6 +41,7 @@ DEFAULT_CONFIG = {
     "license_url": "",       # URL del archivo de licencias (modo remoto)
     "bytecode": True,
     "obf_level": 3,
+    "repo_raw": "https://raw.githubusercontent.com/2025-0181-spec/compilador-lua-mta/main",
 }
 
 # --------------------------------------------------------------------------
@@ -207,12 +208,13 @@ def compilar_todo(cfg):
         if input("  Compilar igualmente? (s/n): ").strip().lower() != "s":
             return
     print("")
+    marca = " [+bloqueo IP]" if cfg["ip_lock"] else ""
     for nombre in archivos:
         try:
             o, n, salida = compilar_archivo(cfg, nombre)
-            print("  [OK] %-25s %6d -> %6d bytes" % (nombre, o, n))
+            print("  [OK] %-22s %6d -> %6d bytes%s" % (nombre, o, n, marca))
         except Exception as e:
-            print("  [ERROR] %-25s %s" % (nombre, e))
+            print("  [ERROR] %-22s %s" % (nombre, e))
     print("\n  Listo. Archivos protegidos en: %s" % OUTPUT_DIR)
     pausa()
 
@@ -420,6 +422,36 @@ def _elegir_licencia(cfg, accion):
 
 # --------------------------------------------------------------------------
 
+def actualizar_herramienta(cfg):
+    os.system("clear")
+    print("==== ACTUALIZAR HERRAMIENTA ====\n")
+    repo = cfg.get("repo_raw", "")
+    print("  URL actual del repo:")
+    print("    %s\n" % (repo or "(sin configurar)"))
+    nueva = input("  URL raw del repo (ENTER para usar la de arriba): ").strip()
+    if nueva:
+        repo = nueva.rstrip("/")
+        cfg["repo_raw"] = repo
+        guardar_config(cfg)
+    if not repo:
+        print("\n  No hay URL configurada."); pausa(); return
+    print("\n  Descargando ultima version...")
+    ok = True
+    for f in ("mta_obfuscator.py", "compilador.py"):
+        url = repo + "/" + f
+        destino = os.path.join(HERE, f)
+        r = subprocess.run(["curl", "-fsSL", "-o", destino, url], capture_output=True)
+        if r.returncode == 0 and os.path.exists(destino) and os.path.getsize(destino) > 0:
+            print("    [OK] %s" % f)
+        else:
+            ok = False
+            print("    [ERROR] %s (revisa la URL y que el repo sea publico)" % f)
+    if ok:
+        print("\n  Actualizado. CIERRA y vuelve a abrir 'compilador' para usar lo nuevo.")
+        print("  IMPORTANTE: recompila tus recursos para que apliquen los cambios.")
+    pausa()
+
+
 def menu_principal():
     asegurar_carpetas()
     cfg = cargar_config()
@@ -446,6 +478,7 @@ def menu_principal():
         print("  3) Configurar capas de proteccion")
         print("  4) Panel de licencias (control por IP)")
         print("  5) Ver carpeta de entrada")
+        print("  6) Actualizar herramienta (descargar ultima version)")
         print("  0) Salir")
         op = input("\n  Opcion: ").strip()
         if op == "1": compilar_todo(cfg)
@@ -459,6 +492,7 @@ def menu_principal():
             else:
                 print("   (vacia: copia aqui tus .lua)")
             pausa()
+        elif op == "6": actualizar_herramienta(cfg)
         elif op == "0":
             print("\n  Hasta luego.\n"); return
 
