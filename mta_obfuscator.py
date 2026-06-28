@@ -316,6 +316,7 @@ def inject_license_guard(code, allowed_ips, rng, mode="local", url="", recheck_s
     getip = "_gi" + sfx
     urls = "_ur" + sfx
     verify = "_vf" + sfx
+    activar = "_ac" + sfx
     ms = int(recheck_seconds) * 1000
 
     g = []
@@ -326,12 +327,20 @@ def inject_license_guard(code, allowed_ips, rng, mode="local", url="", recheck_s
     g.append(code)
     g.append("end")
 
-    # apagar: mensaje en debug (nivel 1 = error rojo) + log + detener recurso
+    # activar: mensaje VERDE en debug (licencia valida) + ejecutar el codigo real
+    g.append("local function %s()" % activar)
+    g.append("local m='[LICENCIA] Licencia activa. Recurso autorizado correctamente.'")
+    g.append("if outputDebugString then outputDebugString(m,0,0,255,0) end")
+    g.append("if outputServerLog then outputServerLog(m) end")
+    g.append("%s()" % main)
+    g.append("end")
+
+    # apagar: mensaje ROJO limpio (nivel 0 con color, SIN el prefijo de ERROR/linea)
     g.append("local function %s(motivo)" % deny)
     g.append("if not %s then" % logged)
     g.append("%s=true" % logged)
     g.append("local m='[LICENCIA] Este recurso requiere una licencia activa. '..tostring(motivo)")
-    g.append("if outputDebugString then outputDebugString(m,1) end")
+    g.append("if outputDebugString then outputDebugString(m,0,255,0,0) end")
     g.append("if outputServerLog then outputServerLog(m) end")
     g.append("end")
     g.append("local r=getThisResource and getThisResource()")
@@ -366,7 +375,7 @@ def inject_license_guard(code, allowed_ips, rng, mode="local", url="", recheck_s
         g.append("local f=loadstring(tostring(data))")
         g.append("local lic=type(f)=='function' and f() or nil")
         g.append("if type(lic)=='table' and lic[ip]==true then")
-        g.append("if not %s then %s=true %s() end" % (started, started, main))
+        g.append("if not %s then %s=true %s() end" % (started, started, activar))
         g.append("else %s('La IP '..ip..' no tiene una licencia activa (bloqueada o no registrada)') end" % deny)
         g.append("end)")
         g.append("if not _r2 then if primera then %s('No se pudo contactar el sistema de licencias (revisa ACL: function.fetchRemote)') end end" % deny)
@@ -380,7 +389,7 @@ def inject_license_guard(code, allowed_ips, rng, mode="local", url="", recheck_s
         g.append("local %s={%s}" % (allow, ips))
         g.append("%s(function(ip)" % getip)
         g.append("if not ip then %s('No se pudo verificar la IP (revisa ACL: function.fetchRemote)') return end" % deny)
-        g.append("if %s[ip] then if not %s then %s=true %s() end" % (allow, started, started, main))
+        g.append("if %s[ip] then if not %s then %s=true %s() end" % (allow, started, started, activar))
         g.append("else %s('La IP '..ip..' no esta autorizada') end" % deny)
         g.append("end)")
 
