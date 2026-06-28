@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 # ============================================================
-#  Compilador / Ofuscador de Lua para MTA — Instalador
+#  Compilador / Ofuscador de Lua para MTA - Instalador
 #  Uso:
 #    curl -sL https://raw.githubusercontent.com/2025-0181-spec/compilador-lua-mta/main/setup.sh | bash
 # ============================================================
 set -euo pipefail
 
-# >>> EDITA ESTAS LINEAS con TU usuario y repositorio de GitHub <<<
-GH_USER=2025-0181-spec/"
+# Tu usuario y repositorio de GitHub
+GH_USER="2025-0181-spec"
 GH_REPO="compilador-lua-mta"
 BRANCH="main"
 
@@ -26,19 +26,13 @@ die()     { echo -e "${RED}[ERROR]${RESET} $*" >&2; exit 1; }
 banner() {
     echo -e "${CYAN}${BOLD}"
     echo "==========================================="
-    echo "   COMPILADOR LUA  -  MTA:SA  (instalador)"
+    echo "   COMPILADOR LUA - MTA:SA - instalador"
     echo "==========================================="
     echo -e "${RESET}"
 }
 
-check_repo_editado() {
-    if [[ "$GH_USER" == "TU_USUARIO" ]]; then
-        die "Falta editar GH_USER en setup.sh con tu usuario REAL de GitHub."
-    fi
-}
-
 check_root() {
-    [[ ${EUID:-$(id -u)} -eq 0 ]] || die "Ejecuta como root.  Prueba:  curl -sL <url> | sudo bash"
+    [ "$(id -u)" -eq 0 ] || die "Ejecuta como root. Prueba: curl -sL URL | sudo bash"
 }
 
 check_internet() {
@@ -57,20 +51,15 @@ install_python() {
 }
 
 download_files() {
-    info "Descargando componentes desde GitHub (${GH_USER}/${GH_REPO})..."
+    info "Descargando componentes desde GitHub ${GH_USER}/${GH_REPO}..."
     mkdir -p "$INSTALL_DIR/input" "$INSTALL_DIR/output"
-    local files=("mta_obfuscator.py" "compilador.py")
-    for f in "${files[@]}"; do
+    for f in mta_obfuscator.py compilador.py; do
         if curl -fsSL --retry 3 --retry-delay 2 -o "$INSTALL_DIR/$f" "$REPO_RAW/$f"; then
             success "Descargado: $f"
         else
-            die "No se pudo descargar $f.
-       Revisa que el repo  ${GH_USER}/${GH_REPO}  sea PUBLICO
-       y que contenga el archivo  $f  en la rama '${BRANCH}'."
+            die "No se pudo descargar $f. Revisa que el repo sea PUBLICO y contenga ese archivo."
         fi
     done
-    # Opcionales (no son criticos si faltan)
-    curl -fsSL -o "$INSTALL_DIR/LEEME.txt" "$REPO_RAW/LEEME.txt" 2>/dev/null || true
 }
 
 create_command() {
@@ -84,9 +73,8 @@ EOF
 }
 
 verify_install() {
-    [[ -f "$INSTALL_DIR/compilador.py" && -f "$INSTALL_DIR/mta_obfuscator.py" ]] \
-        || die "La instalacion quedo incompleta."
-    [[ -x "$BIN_PATH" ]] || die "No se pudo crear el comando global."
+    [ -f "$INSTALL_DIR/compilador.py" ] && [ -f "$INSTALL_DIR/mta_obfuscator.py" ] || die "Instalacion incompleta."
+    [ -x "$BIN_PATH" ] || die "No se pudo crear el comando global."
     success "Instalacion verificada"
 }
 
@@ -103,7 +91,6 @@ print_success() {
 
 main() {
     banner
-    check_repo_editado
     check_root
     check_internet
     install_python
