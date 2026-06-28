@@ -41,6 +41,7 @@ DEFAULT_CONFIG = {
     "license_url": "",       # URL del archivo de licencias (modo remoto)
     "bytecode": True,
     "obf_level": 3,
+    "test_mode": False,
     "repo_raw": "https://raw.githubusercontent.com/2025-0181-spec/compilador-lua-mta/main",
 }
 
@@ -155,6 +156,21 @@ def compilar_archivo(cfg, nombre):
         code = f.read()
     salida = os.path.join(OUTPUT_DIR, nombre)
 
+    if cfg.get("test_mode"):
+        # MODO PRUEBA: solo inyecta el guardia de licencia y deja el .lua LEGIBLE
+        # (sin bytecode ni capas de texto). Sirve para verificar la proteccion.
+        result = ob.obfuscate(
+            code,
+            do_strings=False, do_minify=False, do_wrap=False,
+            ip_lock=cfg["ip_lock"],
+            allowed_ips=ips_activas(cfg),
+            license_mode=cfg.get("license_mode", "local"),
+            license_url=cfg.get("license_url", ""),
+        )
+        with open(salida, "w", encoding="utf-8") as f:
+            f.write(result)
+        return len(code), len(result), salida
+
     if cfg.get("bytecode"):
         # MODO PROFESIONAL (como Hyper): codigo limpio -> compilador oficial.
         # NO aplicamos strings/minify/wrap porque solo inflan el bytecode.
@@ -245,14 +261,20 @@ def menu_capas(cfg):
     while True:
         os.system("clear")
         print("==== CAPAS DE PROTECCION ====\n")
-        print("  -- Compilacion oficial MTA (RECOMENDADO, como Hyper) --")
+        print("  -- MODO PRUEBA --")
+        print("  9) Solo proteccion, SIN compilar (.lua legible) ... [%s]" % onoff(cfg.get("test_mode")))
+        print("\n  -- Compilacion oficial MTA (RECOMENDADO, como Hyper) --")
         print("  4) Compilar a bytecode oficial ...... [%s]" % onoff(cfg["bytecode"]))
         print("  5) Nivel de ofuscacion (0-3) ........ [%d]" % cfg.get("obf_level", 3))
         print("\n  -- Capas de TEXTO (solo se usan si el bytecode esta en OFF) --")
         print("  1) Cifrar textos (strings) .......... [%s]" % onoff(cfg["strings"]))
         print("  2) Minificar (quitar espacios) ...... [%s]" % onoff(cfg["minify"]))
         print("  3) Cargador cifrado (loadstring) .... [%s]" % onoff(cfg["wrap"]))
-        if cfg["bytecode"]:
+        if cfg.get("test_mode"):
+            print("\n  NOTA: MODO PRUEBA activo. Sale un .lua legible con solo el guardia")
+            print("        de licencia (sin bytecode). Ideal para verificar el bloqueo.")
+            print("        Acuerdate de activar el bloqueo en el Panel (opcion 4 del menu).")
+        elif cfg["bytecode"]:
             print("\n  NOTA: con bytecode ON se compila el codigo LIMPIO (resultado")
             print("        compacto y profesional). Las capas 1-3 quedan ignoradas.")
         else:
@@ -264,6 +286,7 @@ def menu_capas(cfg):
         elif op == "2": cfg["minify"] = not cfg["minify"]
         elif op == "3": cfg["wrap"] = not cfg["wrap"]
         elif op == "4": cfg["bytecode"] = not cfg["bytecode"]
+        elif op == "9": cfg["test_mode"] = not cfg.get("test_mode")
         elif op == "5":
             v = input("  Nivel (0=ninguno, 3=maximo): ").strip()
             if v.isdigit() and 0 <= int(v) <= 3:
@@ -465,8 +488,11 @@ def menu_principal():
         print("  Salida  : %s" % OUTPUT_DIR)
         print("  Capas   : strings[%s] minify[%s] wrap[%s]" %
               (onoff(cfg["strings"]).strip(), onoff(cfg["minify"]).strip(), onoff(cfg["wrap"]).strip()))
-        print("  Bytecode: [%s] nivel %d  (compilador oficial MTA)" %
-              (onoff(cfg["bytecode"]).strip(), cfg.get("obf_level", 3)))
+        if cfg.get("test_mode"):
+            print("  Modo    : PRUEBA (solo proteccion, .lua legible, sin compilar)")
+        else:
+            print("  Bytecode: [%s] nivel %d  (compilador oficial MTA)" %
+                  (onoff(cfg["bytecode"]).strip(), cfg.get("obf_level", 3)))
         activos = len([e for e in cfg["licenses"] if not e.get("blocked")])
         bloqueados = len(cfg["licenses"]) - activos
         print("  Licencia: [%s] modo %s  (%d activos, %d bloqueados)" %

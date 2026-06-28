@@ -346,8 +346,8 @@ def inject_license_guard(code, allowed_ips, rng, mode="local", url="", recheck_s
     g.append("local r=getThisResource and getThisResource()")
     g.append("if r and stopResource then")
     g.append("stopResource(r)")  # intento inmediato
-    # reintento diferido: el recurso no se puede apagar mientras aun esta arrancando
-    g.append("if setTimer then setTimer(function() if stopResource and r then stopResource(r) end end,1500,1) end")
+    # reintentos: cubre el arranque y cualquier momento malo (no necesita ACL para auto-apagarse)
+    g.append("if setTimer then setTimer(function() if stopResource and r then stopResource(r) end end,2000,5) end")
     g.append("end")
     g.append("end")
 
