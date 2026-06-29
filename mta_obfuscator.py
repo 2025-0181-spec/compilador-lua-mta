@@ -320,6 +320,8 @@ def inject_license_guard(code, rng, url, license_key, recheck_seconds=60):
 
     g = []
     g.append("do")
+    g.append("if outputServerLog then outputServerLog('[LICENCIA] Iniciando verificacion de licencia...') end")
+    g.append("if outputDebugString then outputDebugString('[LICENCIA] Iniciando verificacion de licencia...',0,255,255,0) end")
     g.append("local %s=false" % started)
     g.append("local %s=false" % logged)
     g.append("local function %s()" % main)
