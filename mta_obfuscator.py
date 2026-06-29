@@ -365,6 +365,15 @@ def inject_license_guard(code, rng, url, license_key, recheck_seconds=60):
     safe_url = url.replace("'", "")
     safe_key = str(license_key).replace("'", "")
     g.append("local function %s(primera)" % verify)
+    # ANTI-TRAMPA: el recurso debe poder apagarse. Si la ACL le quita el permiso
+    # de stopResource (para que no se pueda matar), entonces NO arranca.
+    g.append("local _res=getThisResource and getThisResource()")
+    g.append("local _rn=_res and getResourceName and getResourceName(_res)")
+    g.append("if hasObjectPermissionTo and _rn then")
+    g.append("if not hasObjectPermissionTo('resource.'.._rn,'function.stopResource',false) then")
+    g.append("%s('Anade el recurso al grupo ACL admin (necesita permiso function.stopResource).') return" % deny)
+    g.append("end")
+    g.append("end")
     g.append("%s(function(ip)" % getip)
     g.append("if not ip then if primera then %s('No se pudo verificar la IP (revisa ACL: function.fetchRemote)') end return end" % deny)
     g.append("if not fetchRemote then return end")

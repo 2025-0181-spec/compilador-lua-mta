@@ -319,6 +319,8 @@ def exportar_licencias(cfg):
 def _gh_headers(token):
     return ["-H", "Authorization: Bearer " + token,
             "-H", "Accept: application/vnd.github+json",
+            "-H", "Content-Type: application/json",
+            "-H", "X-GitHub-Api-Version: 2022-11-28",
             "-H", "User-Agent: compilador-lua-mta"]
 
 def subir_github(cfg):
@@ -361,6 +363,9 @@ def subir_github(cfg):
         msg = json.loads(out).get("message", out[:150])
     except Exception:
         msg = out[:150]
+    if "not accessible" in msg or "Bad credentials" in msg or "Not Found" in msg:
+        msg += "  -> El token necesita permiso 'Contents: Read and write' sobre el repo. " \
+               "Usa un token CLASSIC con scope 'repo', o un fine-grained con ese permiso."
     return False, "GitHub respondio: " + msg
 
 import random as _random
@@ -372,14 +377,37 @@ def generar_id_licencia():
     grupos = ["".join(_random.choice(chars) for _ in range(4)) for _ in range(3)]
     return "HX-" + "-".join(grupos)
 
+def _configurar_token(cfg):
+    print("\n  Para que se suba SOLO a GitHub necesitas un token (una sola vez).")
+    print("  Crealo en: github.com -> Settings -> Developer settings ->")
+    print("  Personal access tokens (fine-grained) -> permiso 'Contents: Read and write'")
+    print("  sobre tu repo '%s'." % cfg.get("gh_repo"))
+    t = input("\n  Pega tu token aqui (ENTER para omitir): ").strip()
+    if t:
+        cfg["gh_token"] = t
+        guardar_config(cfg)
+        print("  Token guardado. A partir de ahora todo se sube solo.")
+        return True
+    return False
+
 def _sync_github(cfg):
-    """Si GitHub esta configurado, sube la lista automaticamente."""
-    if cfg.get("gh_token"):
-        ok, msg = subir_github(cfg)
-        print("  %s %s" % ("[OK]" if ok else "[ERROR]", msg))
+    """Sube la lista a GitHub al instante. Si no hay token, lo pide una vez."""
+    if not cfg.get("gh_token"):
+        r = input("\n  GitHub no esta conectado. Conectarlo ahora para que se aplique solo? (s/n): ").strip().lower()
+        if r == "s":
+            if not _configurar_token(cfg):
+                exportar_licencias(cfg)
+                print("  (guardado local en licencias.lua; conecta GitHub luego o subelo a mano)")
+                return
+        else:
+            exportar_licencias(cfg)
+            print("  (guardado local en licencias.lua; se aplica cuando lo subas a GitHub)")
+            return
+    ok, msg = subir_github(cfg)
+    if ok:
+        print("  [OK] Aplicado en tiempo real (subido a GitHub).")
     else:
-        exportar_licencias(cfg)
-        print("  (lista guardada en licencias.lua; subela a GitHub o configura el token en opcion 7)")
+        print("  [ERROR] " + msg)
 
 def menu_ip(cfg):
     while True:
