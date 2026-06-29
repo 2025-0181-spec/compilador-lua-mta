@@ -294,6 +294,48 @@ def wrap_loader(code, rng):
     return "\n".join(parts)
 
 
+def _signal_event(license_key):
+    """Nombre de evento secreto, derivado de la clave, para la senal server->client.
+    Como depende de la clave, el cliente y el servidor compilados con la misma
+    clave usan el mismo evento automaticamente (sin configurar nada)."""
+    import hashlib
+    h = hashlib.md5(("voltyguard:" + str(license_key)).encode("utf-8")).hexdigest()[:12]
+    return "lic_" + h
+
+
+def inject_client_guard(code, rng, license_key):
+    """Guardia para scripts de CLIENTE. Envuelve tu codigo (sin moverlo) y solo
+    lo ejecuta cuando el SERVIDOR le manda la senal de 'autorizado'. El servidor
+    solo emite esa senal si tiene licencia valida. Si no llega senal (servidor
+    bloqueado, sin licencia, o le borraron el script de servidor), NO inicia.
+    El cliente solo ESCUCHA; nunca llama al servidor (no genera errores)."""
+    sfx = "".join(rng.choice("abcdef0123456789") for _ in range(6))
+    main = "_cm" + sfx
+    okv = "_ck" + sfx
+    ev_ok = _signal_event(license_key)
+    g = []
+    g.append("do")
+    g.append("local %s=false" % okv)
+    g.append("local function %s()" % main)
+    g.append(code)
+    g.append("end")
+    g.append("addEvent('%s',true)" % ev_ok)
+    g.append("addEventHandler('%s',root,function()" % ev_ok)
+    g.append("if %s then return end" % okv)
+    g.append("%s=true" % okv)
+    g.append("if outputDebugString then outputDebugString('[LICENCIA] Cliente autorizado por el servidor.',0,0,255,0) end")
+    g.append("%s()" % main)
+    g.append("end)")
+    # diagnostico si la senal tarda; NUNCA ejecuta sin senal (fail-closed)
+    g.append("if setTimer then setTimer(function()")
+    g.append("if not %s and outputDebugString then" % okv)
+    g.append("outputDebugString('[LICENCIA] Sin confirmacion del servidor: recurso no licenciado o falta/borraron el script de servidor.',0,255,128,0)")
+    g.append("end")
+    g.append("end,12000,1) end")
+    g.append("end")
+    return "\n".join(g)
+
+
 def inject_license_guard(code, rng, url, license_key, recheck_seconds=60):
     """Guardia de licencia REMOTO con DOBLE proteccion (IP + clave de licencia).
 
@@ -317,6 +359,7 @@ def inject_license_guard(code, rng, url, license_key, recheck_seconds=60):
     verify = "_vf" + sfx
     activar = "_ac" + sfx
     ms = int(recheck_seconds) * 1000
+    ev_ok = _signal_event(license_key)
 
     g = []
     g.append("do")
@@ -334,6 +377,12 @@ def inject_license_guard(code, rng, url, license_key, recheck_seconds=60):
     g.append("if outputDebugString then outputDebugString(m,0,0,255,0) end")
     g.append("if outputServerLog then outputServerLog(m) end")
     g.append("%s()" % main)
+    # SEnAL para los clientes protegidos: solo se emite si hay licencia
+    g.append("if triggerClientEvent and root and resourceRoot then")
+    g.append("local function _beat() triggerClientEvent(root,'%s',resourceRoot) end" % ev_ok)
+    g.append("_beat()")
+    g.append("if setTimer then setTimer(_beat,4000,0) end")
+    g.append("end")
     g.append("end")
 
     # apagar: mensaje ROJO limpio (nivel 0 con color, SIN el prefijo de ERROR/linea)

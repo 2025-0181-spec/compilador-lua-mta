@@ -571,79 +571,43 @@ def actualizar_herramienta(cfg):
 
 
 def compilar_recurso_cliente(cfg):
-    """Protege un recurso cuyo codigo vive en el CLIENTE: el servidor entrega
-    el codigo del cliente solo si tiene licencia."""
+    """Compila un script de CLIENTE con el guardia que espera la senal del
+    servidor. No mueve tu codigo: solo lo envuelve."""
     archivos = listar_lua()
     if not archivos:
-        print("\n  No hay .lua en input/. Copia ahi tu script de cliente")
-        print("  (y el de servidor, si tienes uno).")
+        print("\n  No hay .lua en input/. Copia ahi tu script de cliente.")
+        pausa(); return
+    if not cfg.get("license_key"):
+        print("\n  Falta la clave de licencia. Revisa el panel.")
         pausa(); return
     print("\n  Archivos en input/:")
     for i, a in enumerate(archivos, 1):
         print("   %d) %s" % (i, a))
-    print("\n  Cual es tu script de CLIENTE (el que quieres proteger)?")
+    print("\n  Cual es tu script de CLIENTE a proteger?")
     c = input("  Numero: ").strip()
     try:
         cli = archivos[int(c) - 1]
     except Exception:
         print("  Opcion invalida."); pausa(); return
-    print("\n  Cual es tu script de SERVIDOR? (ENTER si no tienes, se crea uno)")
-    s = input("  Numero (o ENTER): ").strip()
-    srv = None
-    if s:
-        try:
-            srv = archivos[int(s) - 1]
-        except Exception:
-            print("  Opcion invalida."); pausa(); return
-
-    if not cfg.get("license_url") or not cfg.get("license_key"):
-        print("\n  Falta configurar la licencia (URL o clave). Revisa el panel.")
-        pausa(); return
-    if not cfg.get("ip_lock"):
-        print("\n  El bloqueo esta OFF. Sin el, no hay proteccion.")
-        if input("  Activar el bloqueo ahora? (s/n): ").strip().lower() == "s":
-            cfg["ip_lock"] = True; guardar_config(cfg)
-        else:
-            print("  Cancelado."); pausa(); return
 
     import random as _r
     rng = _r.Random()
-    cli_code = open(os.path.join(INPUT_DIR, cli), encoding="utf-8").read()
-    stub, payload = ob.build_client_delivery(cli_code, rng)
+    code = open(os.path.join(INPUT_DIR, cli), encoding="utf-8").read()
+    guarded = ob.inject_client_guard(code, rng, cfg.get("license_key", ""))
+    out = os.path.join(OUTPUT_DIR, cli)
+    ok, msg = compilar_bytecode(guarded, out, cfg.get("obf_level", 3))
+    if not ok:
+        open(out, "w", encoding="utf-8").write(guarded)
+        print("\n  (Guardado sin bytecode: %s)" % msg)
 
-    # CLIENTE: el cascaron (sin tu logica), compilado
-    cli_pre = ob.obfuscate(stub, do_strings=False, do_minify=False, do_wrap=False)
-    cli_out = os.path.join(OUTPUT_DIR, cli)
-    okc, _m = compilar_bytecode(cli_pre, cli_out, cfg.get("obf_level", 3))
-    if not okc:
-        open(cli_out, "w", encoding="utf-8").write(cli_pre)
-
-    # SERVIDOR: tu codigo de servidor + el payload + el guardia de licencia
-    if srv:
-        srv_code = open(os.path.join(INPUT_DIR, srv), encoding="utf-8").read()
-        srv_name = srv
-    else:
-        srv_code = "-- Servidor de proteccion (generado automaticamente)\n"
-        srv_name = "server_proteccion.lua"
-    srv_full = srv_code + "\n" + payload
-    srv_pre = ob.obfuscate(srv_full, do_strings=False, do_minify=False, do_wrap=False,
-                           ip_lock=True, license_url=cfg.get("license_url", ""),
-                           license_key=cfg.get("license_key", ""))
-    srv_out = os.path.join(OUTPUT_DIR, srv_name)
-    oks, _m = compilar_bytecode(srv_pre, srv_out, cfg.get("obf_level", 3))
-    if not oks:
-        open(srv_out, "w", encoding="utf-8").write(srv_pre)
-
-    print("\n  LISTO. En la carpeta output/ tienes:")
-    print("   - %s   (CLIENTE: cascaron, ya NO contiene tu logica)" % cli)
-    print("   - %s   (SERVIDOR: lleva tu codigo de cliente + el guardia)" % srv_name)
-    print("\n  En el meta.xml del recurso deben quedar estas dos lineas:")
-    print('     <script src="%s" type="client" cache="false" />' % cli)
-    print('     <script src="%s" type="server" />' % srv_name)
-    if not srv:
-        print("\n  OJO: como no tenias servidor, se creo '%s'." % srv_name)
-        print("  Tienes que anadir su linea type=\"server\" al meta.xml.")
-    print("\n  Y recuerda: el recurso debe estar en el grupo ACL admin.")
+    print("\n  LISTO: '%s' protegido en output/." % cli)
+    print("\n  Como funciona: tu codigo de cliente sigue ahi, pero solo arranca")
+    print("  cuando tu servidor (con el bloqueo ON) le manda la senal de licencia.")
+    print("  Si el servidor no tiene licencia o se lo quitan, el cliente NO inicia.")
+    print("\n  IMPORTANTE para que funcione:")
+    print("   1) Compila tambien tu script de SERVIDOR con el bloqueo ON (opcion 1 o 2).")
+    print("   2) El recurso debe estar en el grupo ACL admin.")
+    print("   3) No borres el config.json: la clave debe ser la MISMA en cliente y servidor.")
     pausa()
 
 
@@ -669,7 +633,7 @@ def menu_principal():
         print("\n-----------------------------------------")
         print("  1) Compilar TODO lo de input/")
         print("  2) Compilar un archivo concreto")
-        print("  3) Compilar recurso con PROTECCION DE CLIENTE (client+server)")
+        print("  3) Compilar script de CLIENTE protegido (espera senal del server)")
         print("  4) Configurar capas de proteccion")
         print("  5) Panel de licencias (control por IP)")
         print("  6) Ver carpeta de entrada")
