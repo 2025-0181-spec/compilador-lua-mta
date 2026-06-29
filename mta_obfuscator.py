@@ -402,6 +402,59 @@ def inject_license_guard(code, rng, url, license_key, recheck_seconds=60):
     return "\n".join(g)
 
 
+def _long_bracket(s):
+    """Envuelve texto en un string largo de Lua [==[ ... ]==] sin colisiones."""
+    lvl = 0
+    while ("]" + "=" * lvl + "]") in s or ("[" + "=" * lvl + "[") in s:
+        lvl += 1
+    eq = "=" * lvl
+    return "[%s[\n%s\n]%s]" % (eq, s, eq)
+
+
+def build_client_delivery(client_code, rng):
+    """Protege un script de CLIENTE haciendo que el codigo real lo entregue
+    el SERVIDOR (solo si tiene licencia). Devuelve (stub_cliente, payload_servidor).
+
+    - stub_cliente: reemplaza tu script de cliente. Es un cascaron que pide el
+      codigo al servidor y lo ejecuta. No contiene tu logica.
+    - payload_servidor: se anade a tu script de servidor (que lleva el guardia).
+      Guarda tu codigo de cliente y lo envia SOLO cuando el server tiene licencia
+      (porque este bloque se registra dentro del main que el guardia protege).
+    """
+    h = lambda n: "".join(rng.choice("abcdef0123456789") for _ in range(n))
+    ev_ask = "rq_" + h(10)
+    ev_send = "rs_" + h(10)
+    var = "_cc" + h(6)
+    got = "_ok" + h(6)
+
+    stub = []
+    stub.append("local %s=false" % got)
+    stub.append("addEvent('%s',true)" % ev_send)
+    stub.append("addEventHandler('%s',resourceRoot,function(codigo)" % ev_send)
+    stub.append("if %s then return end" % got)
+    stub.append("local f=loadstring(codigo)")
+    stub.append("if f then %s=true f() end" % got)
+    stub.append("end)")
+    stub.append("local function _pedir() if not %s then triggerServerEvent('%s',resourceRoot) end end" % (got, ev_ask))
+    stub.append("addEventHandler('onClientResourceStart',resourceRoot,function()")
+    stub.append("_pedir()")
+    stub.append("if setTimer then setTimer(_pedir,2000,0) end")
+    stub.append("end)")
+    client_stub = "\n".join(stub)
+
+    payload = []
+    payload.append("local %s=%s" % (var, _long_bracket(client_code)))
+    payload.append("addEvent('%s',true)" % ev_ask)
+    payload.append("addEventHandler('%s',resourceRoot,function()" % ev_ask)
+    payload.append("if client then triggerClientEvent(client,'%s',resourceRoot,%s) end" % (ev_send, var))
+    payload.append("end)")
+    payload.append("if getElementsByType then")
+    payload.append("for _,_p in ipairs(getElementsByType('player')) do triggerClientEvent(_p,'%s',resourceRoot,%s) end" % (ev_send, var))
+    payload.append("end")
+    server_payload = "\n".join(payload)
+    return client_stub, server_payload
+
+
 def obfuscate(code, do_strings=True, do_minify=True, do_wrap=True,
               ip_lock=False, allowed_ips=None, license_mode="remote",
               license_url="", license_key="", seed=None):
